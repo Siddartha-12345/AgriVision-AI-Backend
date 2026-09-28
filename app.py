@@ -5,6 +5,7 @@ from werkzeug.utils import secure_filename
 
 import sqlite3
 import os
+import uuid
 from datetime import datetime
 
 
@@ -13,56 +14,70 @@ from datetime import datetime
 # =========================================================
 
 app = Flask(__name__)
+
+# =========================================================
+# CORS CONFIGURATION
+# =========================================================
+
 CORS(
     app,
-    resources={r"/*": {"origins": "*"}},
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"]
+    resources={
+        r"/*": {
+            "origins": "*"
+        }
+    },
+    methods=[
+        "GET",
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE",
+        "OPTIONS"
+    ],
+    allow_headers=[
+        "Content-Type",
+        "Authorization"
+    ],
+    expose_headers=[
+        "Content-Type"
+    ]
 )
+
+
+# Explicit OPTIONS response
+@app.route("/predict", methods=["OPTIONS"])
+def predict_options():
+    return "", 204
 
 
 # =========================================================
 # PROJECT PATHS
 # =========================================================
 
-# This automatically points to the current backend folder.
-# Local:
-# C:\...\Desktop\AgriVision-Backend
-#
-# Render:
-# /opt/render/project/src
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
 
-
-# YOLO model
 MODEL_PATH = os.path.join(
     BASE_DIR,
     "best.pt"
 )
 
-
-# Uploaded images
 UPLOAD_FOLDER = os.path.join(
     BASE_DIR,
     "uploads"
 )
 
-
-# YOLO result images
 RESULT_FOLDER = os.path.join(
     BASE_DIR,
     "results"
 )
 
-
-# Detection result images
 DETECTION_FOLDER = os.path.join(
     RESULT_FOLDER,
     "detections"
 )
 
-
-# SQLite database
 DATABASE = os.path.join(
     BASE_DIR,
     "agrivision.db"
@@ -118,9 +133,13 @@ print("Loading AgriVision AI model...")
 
 try:
 
-    model = YOLO(MODEL_PATH)
+    model = YOLO(
+        MODEL_PATH
+    )
 
-    print("YOLO model loaded successfully!")
+    print(
+        "YOLO model loaded successfully!"
+    )
 
 except Exception as error:
 
@@ -128,9 +147,7 @@ except Exception as error:
         "ERROR: Could not load YOLO model."
     )
 
-    print(
-        error
-    )
+    print(error)
 
     raise
 
@@ -180,7 +197,6 @@ def init_database():
     )
 
 
-# Initialize database
 init_database()
 
 
@@ -188,7 +204,7 @@ init_database()
 # HOME ROUTE
 # =========================================================
 
-@app.route("/")
+@app.route("/", methods=["GET"])
 def home():
 
     return jsonify({
@@ -207,7 +223,8 @@ def home():
 # =========================================================
 
 @app.route(
-    "/results/detections/<path:filename>"
+    "/results/detections/<path:filename>",
+    methods=["GET"]
 )
 def serve_detection(filename):
 
@@ -227,75 +244,96 @@ def serve_detection(filename):
 )
 def predict():
 
-    # -----------------------------------------------------
-    # CHECK IMAGE
-    # -----------------------------------------------------
-
-    if "image" not in request.files:
-
-        return jsonify({
-
-            "error":
-                "No image uploaded"
-
-        }), 400
-
-
-    image = request.files["image"]
-
-
-    if image.filename == "":
-
-        return jsonify({
-
-            "error":
-                "No image selected"
-
-        }), 400
-
-
-    # -----------------------------------------------------
-    # CHECK IMAGE TYPE
-    # -----------------------------------------------------
-
-    if not allowed_file(image.filename):
-
-        return jsonify({
-
-            "error":
-                "Only JPG, JPEG and PNG images are allowed"
-
-        }), 400
-
-
-    # -----------------------------------------------------
-    # SECURE FILE NAME
-    # -----------------------------------------------------
-
-    filename = secure_filename(
-        image.filename
-    )
-
-
-    # -----------------------------------------------------
-    # SAVE UPLOADED IMAGE
-    # -----------------------------------------------------
-
-    image_path = os.path.join(
-        UPLOAD_FOLDER,
-        filename
-    )
-
-    image.save(
-        image_path
-    )
-
-
-    # -----------------------------------------------------
-    # RUN YOLO MODEL
-    # -----------------------------------------------------
-
     try:
+
+        # -------------------------------------------------
+        # CHECK IMAGE
+        # -------------------------------------------------
+
+        if "image" not in request.files:
+
+            return jsonify({
+
+                "error":
+                    "No image uploaded"
+
+            }), 400
+
+
+        image = request.files["image"]
+
+
+        if image.filename == "":
+
+            return jsonify({
+
+                "error":
+                    "No image selected"
+
+            }), 400
+
+
+        # -------------------------------------------------
+        # CHECK IMAGE TYPE
+        # -------------------------------------------------
+
+        if not allowed_file(
+            image.filename
+        ):
+
+            return jsonify({
+
+                "error":
+                    "Only JPG, JPEG and PNG images are allowed"
+
+            }), 400
+
+
+        # -------------------------------------------------
+        # SECURE + UNIQUE FILE NAME
+        # -------------------------------------------------
+
+        original_filename = secure_filename(
+            image.filename
+        )
+
+        extension = os.path.splitext(
+            original_filename
+        )[1].lower()
+
+        filename = (
+            uuid.uuid4().hex
+            + extension
+        )
+
+
+        # -------------------------------------------------
+        # SAVE UPLOADED IMAGE
+        # -------------------------------------------------
+
+        image_path = os.path.join(
+            UPLOAD_FOLDER,
+            filename
+        )
+
+        image.save(
+            image_path
+        )
+
+
+        print(
+            "Image received:",
+            filename
+        )
+
+
+        # -------------------------------------------------
+        # RUN YOLO MODEL
+        # -------------------------------------------------
+
+        print(
+            "Running YOLO prediction..."
+        )
 
         results = model.predict(
 
@@ -315,282 +353,302 @@ def predict():
 
         )
 
-    except Exception as error:
 
-        return jsonify({
-
-            "error":
-                "Model prediction failed: "
-                + str(error)
-
-        }), 500
-
-
-    # -----------------------------------------------------
-    # GET FIRST RESULT
-    # -----------------------------------------------------
-
-    result = results[0]
-
-
-    detections = []
-
-
-    # -----------------------------------------------------
-    # EXTRACT DETECTIONS
-    # -----------------------------------------------------
-
-    for box in result.boxes:
-
-        class_id = int(
-            box.cls.item()
+        print(
+            "YOLO prediction completed."
         )
 
-        confidence = float(
-            box.conf.item()
+
+        # -------------------------------------------------
+        # CHECK RESULT
+        # -------------------------------------------------
+
+        if not results:
+
+            return jsonify({
+
+                "error":
+                    "No prediction result returned"
+
+            }), 500
+
+
+        result = results[0]
+
+        detections = []
+
+
+        # -------------------------------------------------
+        # EXTRACT DETECTIONS
+        # -------------------------------------------------
+
+        if result.boxes is not None:
+
+            for box in result.boxes:
+
+                class_id = int(
+                    box.cls.item()
+                )
+
+                confidence = float(
+                    box.conf.item()
+                )
+
+                coordinates = (
+                    box.xyxy[0].tolist()
+                )
+
+                x1 = coordinates[0]
+                y1 = coordinates[1]
+                x2 = coordinates[2]
+                y2 = coordinates[3]
+
+
+                # Class mapping
+                #
+                # 0 = Crop
+                # 1 = Weed
+
+                if class_id == 0:
+
+                    class_name = "Crop"
+
+                elif class_id == 1:
+
+                    class_name = "Weed"
+
+                else:
+
+                    class_name = "Unknown"
+
+
+                detections.append({
+
+                    "class":
+                        class_name,
+
+                    "confidence":
+                        round(
+                            confidence,
+                            2
+                        ),
+
+                    "x1":
+                        round(
+                            x1,
+                            2
+                        ),
+
+                    "y1":
+                        round(
+                            y1,
+                            2
+                        ),
+
+                    "x2":
+                        round(
+                            x2,
+                            2
+                        ),
+
+                    "y2":
+                        round(
+                            y2,
+                            2
+                        )
+
+                })
+
+
+        # -------------------------------------------------
+        # COUNT CROP AND WEED
+        # -------------------------------------------------
+
+        crop_count = 0
+        weed_count = 0
+
+
+        for detection in detections:
+
+            if detection["class"] == "Crop":
+
+                crop_count += 1
+
+            elif detection["class"] == "Weed":
+
+                weed_count += 1
+
+
+        total_objects = (
+            crop_count +
+            weed_count
         )
 
-        coordinates = (
-            box.xyxy[0].tolist()
-        )
 
-        x1 = coordinates[0]
-        y1 = coordinates[1]
-        x2 = coordinates[2]
-        y2 = coordinates[3]
+        # -------------------------------------------------
+        # CALCULATE WEED DENSITY
+        # -------------------------------------------------
 
+        if total_objects > 0:
 
-        # Class mapping
-        #
-        # 0 = Crop
-        # 1 = Weed
-
-        if class_id == 0:
-
-            class_name = "Crop"
-
-        elif class_id == 1:
-
-            class_name = "Weed"
+            weed_density = (
+                weed_count /
+                total_objects
+            ) * 100
 
         else:
 
-            class_name = "Unknown"
+            weed_density = 0
 
 
-        detections.append({
-
-            "class":
-                class_name,
-
-            "confidence":
-                round(
-                    confidence,
-                    2
-                ),
-
-            "x1":
-                round(
-                    x1,
-                    2
-                ),
-
-            "y1":
-                round(
-                    y1,
-                    2
-                ),
-
-            "x2":
-                round(
-                    x2,
-                    2
-                ),
-
-            "y2":
-                round(
-                    y2,
-                    2
-                )
-
-        })
-
-
-    # -----------------------------------------------------
-    # COUNT CROP AND WEED
-    # -----------------------------------------------------
-
-    crop_count = int(
-        (
-            result.boxes.cls == 0
-        )
-        .sum()
-        .item()
-    )
-
-
-    weed_count = int(
-        (
-            result.boxes.cls == 1
-        )
-        .sum()
-        .item()
-    )
-
-
-    total_objects = (
-        crop_count +
-        weed_count
-    )
-
-
-    # -----------------------------------------------------
-    # CALCULATE WEED DENSITY
-    # -----------------------------------------------------
-
-    if total_objects > 0:
-
-        weed_density = (
-            weed_count /
-            total_objects
-        ) * 100
-
-    else:
-
-        weed_density = 0
-
-
-    weed_density = round(
-        weed_density,
-        2
-    )
-
-
-    # -----------------------------------------------------
-    # CALCULATE SEVERITY
-    #
-    # Project thresholds:
-    # < 5%       = Low
-    # 5% - 20%   = Medium
-    # > 20%      = High
-    # -----------------------------------------------------
-
-    if weed_density < 5:
-
-        severity = "Low"
-
-    elif weed_density <= 20:
-
-        severity = "Medium"
-
-    else:
-
-        severity = "High"
-
-
-    # -----------------------------------------------------
-    # DETECTED IMAGE URL
-    # -----------------------------------------------------
-
-    detection_image = (
-        "/results/detections/"
-        + filename
-    )
-
-
-    # -----------------------------------------------------
-    # SAVE ANALYSIS TO DATABASE
-    # -----------------------------------------------------
-
-    try:
-
-        connection = sqlite3.connect(
-            DATABASE
+        weed_density = round(
+            weed_density,
+            2
         )
 
-        cursor = connection.cursor()
+
+        # -------------------------------------------------
+        # CALCULATE SEVERITY
+        #
+        # < 5%       = Low
+        # 5 - 20%    = Medium
+        # > 20%      = High
+        # -------------------------------------------------
+
+        if weed_density < 5:
+
+            severity = "Low"
+
+        elif weed_density <= 20:
+
+            severity = "Medium"
+
+        else:
+
+            severity = "High"
 
 
-        created_at = (
-            datetime.now()
-            .strftime(
+        # -------------------------------------------------
+        # DETECTED IMAGE URL
+        # -------------------------------------------------
+
+        detection_image = (
+            "/results/detections/"
+            + filename
+        )
+
+
+        # -------------------------------------------------
+        # SAVE ANALYSIS TO DATABASE
+        # -------------------------------------------------
+
+        try:
+
+            connection = sqlite3.connect(
+                DATABASE
+            )
+
+            cursor = connection.cursor()
+
+
+            created_at = datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
+
+
+            cursor.execute(
+                """
+                INSERT INTO detection_history
+                (
+                    image_name,
+                    crop_count,
+                    weed_count,
+                    weed_density,
+                    severity,
+                    detection_image,
+                    created_at
+                )
+
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+
+                (
+                    filename,
+                    crop_count,
+                    weed_count,
+                    weed_density,
+                    severity,
+                    detection_image,
+                    created_at
+                )
+            )
+
+
+            connection.commit()
+
+            connection.close()
+
+
+        except Exception as database_error:
+
+            print(
+                "Database error:",
+                database_error
+            )
+
+
+        # -------------------------------------------------
+        # SEND RESULT TO FRONTEND
+        # -------------------------------------------------
+
+        response = {
+
+            "crop_count":
+                crop_count,
+
+            "weed_count":
+                weed_count,
+
+            "weed_density":
+                weed_density,
+
+            "severity":
+                severity,
+
+            "detected_image":
+                detection_image,
+
+            "detections":
+                detections
+
+        }
+
+
+        print(
+            "Prediction response:",
+            response
         )
 
 
-        cursor.execute(
-            """
-            INSERT INTO detection_history
-            (
-                image_name,
-                crop_count,
-                weed_count,
-                weed_density,
-                severity,
-                detection_image,
-                created_at
-            )
-
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-
-            (
-                filename,
-
-                crop_count,
-
-                weed_count,
-
-                weed_density,
-
-                severity,
-
-                detection_image,
-
-                created_at
-            )
-        )
-
-
-        connection.commit()
-
-        connection.close()
+        return jsonify(
+            response
+        ), 200
 
 
     except Exception as error:
 
         print(
-            "Database error:",
+            "PREDICTION ERROR:",
             error
         )
 
+        return jsonify({
 
-    # -----------------------------------------------------
-    # SEND RESULT TO FRONTEND
-    # -----------------------------------------------------
+            "error":
+                "Prediction failed: "
+                + str(error)
 
-    return jsonify({
-
-        "crop_count":
-            crop_count,
-
-        "weed_count":
-            weed_count,
-
-        "weed_density":
-            weed_density,
-
-        "severity":
-            severity,
-
-        "detected_image":
-            detection_image,
-
-        "detections":
-            detections
-
-    })
+        }), 500
 
 
 # =========================================================
@@ -621,19 +679,12 @@ def get_history():
             SELECT
 
                 id,
-
                 image_name,
-
                 crop_count,
-
                 weed_count,
-
                 weed_density,
-
                 severity,
-
                 detection_image,
-
                 created_at
 
             FROM detection_history
@@ -820,7 +871,7 @@ def delete_all_history():
 
 
 # =========================================================
-# RUN FLASK SERVER
+# RUN LOCAL SERVER
 # =========================================================
 
 if __name__ == "__main__":
@@ -856,9 +907,6 @@ if __name__ == "__main__":
 
     print("")
 
-
-    # Render provides PORT environment variable.
-    # Local testing uses 5000.
 
     port = int(
         os.environ.get(
